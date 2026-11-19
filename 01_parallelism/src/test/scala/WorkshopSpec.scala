@@ -10,7 +10,11 @@ class WorkshopSpec extends AnyFunSuite:
     assert(Workshop.categorize(90.0) == Workshop.HighRisk)
     
     // Перевірте самостійно для інших граничних значень (наприклад, 60.0 та 10.0)
-    // assert(...)
+    assert(Workshop.categorize(60.0) == Workshop.MediumRisk)
+    assert(Workshop.categorize(10.0) == Workshop.LowRisk)
+    // Граничні значення: > 80 та > 50 (строго)
+    assert(Workshop.categorize(80.0) == Workshop.MediumRisk)
+    assert(Workshop.categorize(50.0) == Workshop.LowRisk)
 
   test("Функція getMultiplier повинна повертати правильні коефіцієнти"):
     assert(Workshop.getMultiplier(Workshop.HighRisk) == 1.5)
