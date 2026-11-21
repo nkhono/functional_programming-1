@@ -3,14 +3,12 @@ package water
 import Event.*
 import ParseError.*
 
-// ---------- Smart constructors for contract field types ----------
 
 final case class Liters private[water] (value: BigDecimal)
 final case class SaltKg private[water] (value: BigDecimal)
 
 object Quantity:
 
-  /** Decimal with scale <= 2 (contract: scale 2), strictly positive and within [min, max]. */
   private def parse(line: Int, field: String, raw: String, min: BigDecimal, max: BigDecimal): Either[ParseError, BigDecimal] =
     if !raw.matches("-?\\d+(\\.\\d{1,2})?") then Left(InvalidQuantity(line, field, raw))
     else
@@ -24,11 +22,9 @@ object Quantity:
   def salt(line: Int, field: String, raw: String, min: BigDecimal, max: BigDecimal): Either[ParseError, SaltKg] =
     parse(line, field, raw, min, max).map(SaltKg(_))
 
-// ---------- Parser: CSV line -> Either[ParseError, Event] ----------
 
 object Parser:
 
-  // ranges from n04_variants.draft.json (variant 24)
   private val FilterRange = (BigDecimal("15.00"), BigDecimal("400.00"))
   private val FlushRange  = (BigDecimal("8.00"), BigDecimal("120.00"))
   private val SaltRange   = (BigDecimal("1.50"), BigDecimal("12.00"))
@@ -47,7 +43,6 @@ object Parser:
         case "CARTRIDGE_REPLACE" => Right(CartridgeReplace)
         case other               => Left(UnknownEvent(lineNo, other))
 
-  /** Batch processing: (errors, events). Header line is skipped. */
   def parseAll(lines: Iterator[String]): (List[ParseError], List[Event]) =
     lines.zipWithIndex
       .drop(1)
