@@ -1,128 +1,95 @@
 package water
 
+/** Variant 24: automatic water purification station (contract: water_filtration). */
+
+// ---------- Domain events ----------
+
 enum Event:
+  case FilterBatch(liters: Liters)
+  case FlushDrain(liters: Liters)
+  case Regenerate(salt: SaltKg)
+  case CartridgeReplace
 
-  case Filtered(rawLiters: Long)
+// ---------- Errors (parse-layer + domain-layer) ----------
 
-  case Backwash(liters: Long)
-
-  case SaltAdded(kg: Long)
-
-  case ModuleReplaced(newCapacity: Long)
-
+enum ParseError:
+  case EmptyEvent(line: Int)
+  case UnknownEvent(line: Int, code: String)
+  case MalformedRow(line: Int, columns: Int)
+  case InvalidQuantity(line: Int, field: String, raw: String)
+  case OutOfRange(line: Int, field: String, raw: String)
 
 enum Rejection:
+  case ResourceExhausted(requested: BigDecimal, remaining: BigDecimal)
+  case FlushExceedsProcessed(requested: BigDecimal, available: BigDecimal)
 
-  case NonPositiveAmount(amount: Long)
-
-  case ResourceExhausted(requested: Long, remaining: Long)
-
-  case BackwashExceedsProcessed(requested: Long, available: Long)
-
-  case SaltTankOverflow(requested: Long, freeSpace: Long)
-
+// ---------- System state ----------
 
 final case class Station(
-    moduleCapacity: Long,
-    moduleUsed: Long,
-    totalRaw: Long,
-    totalBackwash: Long,
-    saltKg: Long,
-    saltCapacityKg: Long,
+    cartridgeCapacity: BigDecimal,
+    cartridgeUsed: BigDecimal,
+    totalRaw: BigDecimal,
+    totalFlushed: BigDecimal,
+    saltKg: BigDecimal,
     replacements: Int
 ):
 
-  def remainingResource: Long =
-    moduleCapacity - moduleUsed
+  /** Remaining filter resource (liters until replacement). */
+  def remainingResource: BigDecimal = cartridgeCapacity - cartridgeUsed
 
-  def cleanDelivered: Long =
-    totalRaw - totalBackwash
+  /** Total clean water delivered to consumers. */
+  def cleanDelivered: BigDecimal = totalRaw - totalFlushed
 
-  def lossPercent: Double =
-    if totalRaw == 0 then 0.0
-    else totalBackwash.toDouble * 100 / totalRaw
+  /** Percentage of technological water losses on flushing. */
+  def lossPercent: BigDecimal =
+    if totalRaw == 0 then BigDecimal(0)
+    else (totalFlushed * 100 / totalRaw).setScale(2, BigDecimal.RoundingMode.HALF_UP)
 
-  def mustStop: Boolean =
-    remainingResource <= 0
+  /** Invariant stop_filtration_when_cartridge_depleted: filtration must stop. */
+  def mustStop: Boolean = remainingResource <= 0
 
+  /** Invariant check: used resource never exceeds capacity, flushes never exceed raw. */
+  def invariantHolds: Boolean =
+    cartridgeUsed >= 0 && cartridgeUsed <= cartridgeCapacity &&
+      totalFlushed <= totalRaw
 
 object Station:
 
   import Event.*
   import Rejection.*
 
-  def initial(moduleCapacity: Long, saltCapacityKg: Long = 100): Station =
-    require(moduleCapacity > 0 && saltCapacityKg > 0, "capacities must be positive")
+  /** Contract constant: cartridgeCapacityLiters. */
+  val CartridgeCapacityLiters: BigDecimal = BigDecimal(5000)
 
-    Station(
-      moduleCapacity = moduleCapacity,
-      moduleUsed = 0,
-      totalRaw = 0,
-      totalBackwash = 0,
-      saltKg = 0,
-      saltCapacityKg = saltCapacityKg,
-      replacements = 0
-    )
+  def initial(capacity: BigDecimal = CartridgeCapacityLiters): Station =
+    Station(capacity, 0, 0, 0, 0, 0)
 
-  def apply(s: Station, e: Event): Either[Rejection, Station] =
+  def step(s: Station, e: Event): Either[Rejection, Station] =
     e match
 
-      case Filtered(n) =>
-        if n <= 0 then
-          Left(NonPositiveAmount(n))
-        else if n > s.remainingResource then
-          Left(ResourceExhausted(n, s.remainingResource))
+      case FilterBatch(l) =>
+        if l.value > s.remainingResource then
+          Left(ResourceExhausted(l.value, s.remainingResource)) // forbidden: depleted cartridge
         else
-          Right(
-            s.copy(
-              moduleUsed = s.moduleUsed + n,
-              totalRaw = s.totalRaw + n
-            )
-          )
+          Right(s.copy(cartridgeUsed = s.cartridgeUsed + l.value, totalRaw = s.totalRaw + l.value))
 
-      case Backwash(n) =>
-        val available = s.totalRaw - s.totalBackwash
+      case FlushDrain(l) =>
+        val available = s.totalRaw - s.totalFlushed
+        if l.value > available then Left(FlushExceedsProcessed(l.value, available))
+        else Right(s.copy(totalFlushed = s.totalFlushed + l.value))
 
-        if n <= 0 then
-          Left(NonPositiveAmount(n))
-        else if n > available then
-          Left(BackwashExceedsProcessed(n, available))
-        else
-          Right(s.copy(totalBackwash = s.totalBackwash + n))
+      case Regenerate(kg) =>
+        Right(s.copy(saltKg = s.saltKg + kg.value))
 
-      case SaltAdded(kg) =>
-        val free = s.saltCapacityKg - s.saltKg
+      case CartridgeReplace =>
+        Right(s.copy(cartridgeUsed = 0, replacements = s.replacements + 1))
 
-        if kg <= 0 then
-          Left(NonPositiveAmount(kg))
-        else if kg > free then
-          Left(SaltTankOverflow(kg, free))
-        else
-          Right(s.copy(saltKg = s.saltKg + kg))
-
-      case ModuleReplaced(capacity) =>
-        if capacity <= 0 then
-          Left(NonPositiveAmount(capacity))
-        else
-          Right(
-            s.copy(
-              moduleCapacity = capacity,
-              moduleUsed = 0,
-              replacements = s.replacements + 1
-            )
-          )
-
-  def replay(
-      start: Station,
-      events: List[Event]
-  ): (Station, List[(Event, Rejection)]) =
-    events.foldLeft((start, List.empty[(Event, Rejection)])) {
-      case ((state, rejected), event) =>
-        apply(state, event) match
-
-          case Right(next) =>
-            (next, rejected)
-
-          case Left(reason) =>
-            (state, rejected :+ (event -> reason))
+  /** Fold over valid events; forbidden operations are collected and leave the state unchanged. */
+  def replay(start: Station, events: Iterable[Event]): (Station, List[(Event, Rejection)]) =
+    val (st, rejected) = events.foldLeft((start, List.empty[(Event, Rejection)])) {
+      case ((state, rej), ev) =>
+        step(state, ev) match
+          case Right(next) => (next, rej)
+          case Left(r)     => (state, (ev -> r) :: rej)
     }
+    (st, rejected.reverse)
