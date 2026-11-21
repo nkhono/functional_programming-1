@@ -52,7 +52,7 @@ object Station:
   import Rejection.*
 
   def initial(moduleCapacity: Long, saltCapacityKg: Long = 100): Station =
-    require(moduleCapacity > 0 && saltCapacityKg > 0, "ємності мають бути додатні")
+    require(moduleCapacity > 0 && saltCapacityKg > 0, "capacities must be positive")
 
     Station(
       moduleCapacity = moduleCapacity,
