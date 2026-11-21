@@ -4,3 +4,4 @@ project/project/
 .bsp/
 .metals/
 .scala-build/
+.vscode/
